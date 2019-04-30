@@ -67,7 +67,7 @@ typedef struct samview_settings {
     int flag_off;
     int flag_alloff;
     int min_qlen;
-    int remove_B;
+  int remove_B;
     uint32_t subsam_seed;
     double subsam_frac;
     char* library;
@@ -76,6 +76,8 @@ typedef struct samview_settings {
     char** remove_aux;
     int multi_region;
     char* tag;
+  int bin_qualities;
+  uint8_t *quality_lookup;  
 } samview_settings_t;
 
 
@@ -87,6 +89,8 @@ extern char *samfaipath(const char *fn_ref);
 // Returns 0 to indicate read should be output 1 otherwise
 static int process_aln(const bam_hdr_t *h, bam1_t *b, samview_settings_t* settings)
 {
+  
+  
     if (settings->remove_B) bam_remove_B(b);
     if (settings->min_qlen > 0) {
         int k, qlen = 0;
@@ -135,7 +139,31 @@ static int process_aln(const bam_hdr_t *h, bam1_t *b, samview_settings_t* settin
             }
         }
     }
+
+    if(settings->bin_qualities) {
+      uint8_t *q = (uint8_t *)bam_get_qual(b);
+      for(int i=0;i<b->core.l_qseq;i++) {
+	q[i] = settings->quality_lookup[q[i]];
+      }
+    }
     return 0;
+}
+
+static void setup_quality_lookup(char *intervals,samview_settings_t* settings) {
+  int MAXQUAL=93;
+  settings->quality_lookup = (uint8_t *)malloc(MAXQUAL);
+  uint8_t i;
+  uint8_t current_q=0,next_q;
+  char *q_str,*ptr;
+  q_str = strtok_r(intervals, ",", &ptr);
+  while(q_str) {
+    next_q=atoi(q_str);
+    assert(next_q<MAXQUAL);
+    for(i=current_q;i<next_q;i++) settings->quality_lookup[i] = current_q;
+    current_q=next_q;
+    q_str = strtok_r(NULL, ",", &ptr);
+  }
+  for(i=next_q;i<MAXQUAL;i++) settings->quality_lookup[i] = current_q;  
 }
 
 static char *drop_rg(char *hdtxt, rghash_t h, int *len)
@@ -326,7 +354,6 @@ int main_samview(int argc, char *argv[])
     htsThreadPool p = {NULL, 0};
     int filter_state = ALL, filter_op = 0;
     int result;
-
     samview_settings_t settings = {
         .rghash = NULL,
         .tvhash = NULL,
@@ -341,7 +368,9 @@ int main_samview(int argc, char *argv[])
         .library = NULL,
         .bed = NULL,
         .multi_region = 0,
-        .tag = NULL
+        .tag = NULL,
+	.bin_qualities = 0,
+	.quality_lookup = NULL
     };
 
     static const struct option lopts[] = {
@@ -362,7 +391,7 @@ int main_samview(int argc, char *argv[])
     opterr = 0;
 
     while ((c = getopt_long(argc, argv,
-                            "SbBcCt:h1Ho:O:q:f:F:G:ul:r:T:R:d:D:L:s:@:m:x:U:MX",
+                            "SbBcCt:h1Ho:O:q:f:F:G:ul:r:T:R:d:D:L:s:@:m:x:U:MXQ:",
                             lopts, NULL)) >= 0) {
         switch (c) {
         case 's':
@@ -500,6 +529,12 @@ int main_samview(int argc, char *argv[])
                 return usage(stderr, EXIT_FAILURE, 0);
             }
         case 'B': settings.remove_B = 1; break;
+	case 'Q':
+	  {
+	    settings.bin_qualities = 1;
+	    setup_quality_lookup(optarg,&settings);
+	    break;
+	  }
         case 'x':
             {
                 if (strlen(optarg) != 2) {
@@ -784,7 +819,7 @@ view_end:
     if (un_out) check_sam_close("view", un_out, fn_un_out, "file", &ret);
     if (fp_out) fclose(fp_out);
 
-    free(fn_list); free(fn_out); free(settings.library);  free(fn_un_out);
+    free(fn_list); free(fn_out); free(settings.library);  free(fn_un_out); free(settings.quality_lookup);
     sam_global_args_free(&ga);
     if ( header ) bam_hdr_destroy(header);
     if (settings.bed) bed_destroy(settings.bed);
@@ -827,6 +862,7 @@ static int usage(FILE *fp, int exit_status, int is_long_help)
 "  -u       uncompressed BAM output (implies -b)\n"
 "  -h       include header in SAM output\n"
 "  -H       print SAM header only (no alignments)\n"
+"  -Q [a,b,c] bin quality scores\n"
 "  -c       print only the count of matching records\n"
 "  -o FILE  output file name [stdout]\n"
 "  -U FILE  output reads not selected by filters to FILE [null]\n"
