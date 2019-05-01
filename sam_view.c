@@ -141,9 +141,10 @@ static int process_aln(const bam_hdr_t *h, bam1_t *b, samview_settings_t* settin
     }
 
     if(settings->bin_qualities) {
+      int k;
       uint8_t *q = (uint8_t *)bam_get_qual(b);
-      for(int i=0;i<b->core.l_qseq;i++) {
-	q[i] = settings->quality_lookup[q[i]];
+      for(k=0;k<b->core.l_qseq;k++) {
+	q[k] = settings->quality_lookup[q[k]];
       }
     }
     return 0;
